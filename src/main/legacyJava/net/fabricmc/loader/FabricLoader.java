@@ -36,7 +36,6 @@ public abstract class FabricLoader implements net.fabricmc.loader.api.FabricLoad
 	@Deprecated
 	public static final FabricLoader INSTANCE = FabricLoaderImpl.InitHelper.get();
 
-	// This is unused by Iris, and we can't access the current version clearly from here.
 	public File getModsDirectory() {
 		return getGameDir().resolve("iris-reserved").toFile();
 	}

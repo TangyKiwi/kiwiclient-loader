@@ -193,7 +193,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 		ModDiscoverer discoverer = new ModDiscoverer();
 		discoverer.addCandidateFinder(new ClasspathModCandidateFinder());
-		discoverer.addCandidateFinder(new DirectoryModCandidateFinder(gameDir.resolve("iris-reserved").resolve(getGameProvider().getNormalizedGameVersion()), remapRegularMods));
+		discoverer.addCandidateFinder(new DirectoryModCandidateFinder(gameDir.resolve("iris-reserved"), remapRegularMods));
 		discoverer.addCandidateFinder(new ArgumentModCandidateFinder(remapRegularMods));
 
 		modCandidates = discoverer.discoverMods(this);
