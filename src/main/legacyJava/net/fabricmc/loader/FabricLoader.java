@@ -37,7 +37,8 @@ public abstract class FabricLoader implements net.fabricmc.loader.api.FabricLoad
 	public static final FabricLoader INSTANCE = FabricLoaderImpl.InitHelper.get();
 
 	public File getModsDirectory() {
-		return getGameDir().resolve("iris-reserved").toFile();
+		//TODO: is there a cleaner way to do this?
+		return getGameDir().resolve("iris-reserved").resolve(((FabricLoaderImpl) INSTANCE).getGameProvider().getRawGameVersion()).toFile();
 	}
 
 	@Override
