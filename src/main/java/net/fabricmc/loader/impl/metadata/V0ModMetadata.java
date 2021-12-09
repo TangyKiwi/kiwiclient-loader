@@ -38,7 +38,7 @@ final class V0ModMetadata extends AbstractModMetadata implements LoaderModMetada
 	private Version version;
 
 	// Optional (Environment)
-	private final Collection<ModDependency> dependencies;
+	private Collection<ModDependency> dependencies;
 	private final String languageAdapter = "net.fabricmc.loader.language.JavaLanguageAdapter"; // TODO: Constants class?
 	private final Mixins mixins;
 	private final ModEnvironment environment; // REMOVEME: Replacing Side in old metadata with this
@@ -57,7 +57,7 @@ final class V0ModMetadata extends AbstractModMetadata implements LoaderModMetada
 			String name, String description, Collection<Person> authors, Collection<Person> contributors, ContactInformation links, String license) {
 		this.id = id;
 		this.version = version;
-		this.dependencies = Collections.unmodifiableCollection(DependencyOverrides.INSTANCE.apply(id, dependencies));
+		this.dependencies = Collections.unmodifiableCollection(dependencies);
 
 		if (mixins == null) {
 			this.mixins = V0ModMetadata.EMPTY_MIXINS;
@@ -125,6 +125,11 @@ final class V0ModMetadata extends AbstractModMetadata implements LoaderModMetada
 	@Override
 	public Collection<ModDependency> getDependencies() {
 		return dependencies;
+	}
+
+	@Override
+	public void setDependencies(Collection<ModDependency> dependencies) {
+		this.dependencies = Collections.unmodifiableCollection(dependencies);
 	}
 
 	// General metadata

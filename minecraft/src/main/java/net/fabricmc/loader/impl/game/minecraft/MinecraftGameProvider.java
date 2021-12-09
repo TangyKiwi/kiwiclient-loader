@@ -16,22 +16,25 @@
 
 package net.fabricmc.loader.impl.game.minecraft;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Optional;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipFile;
@@ -41,14 +44,15 @@ import net.fabricmc.loader.api.ObjectShare;
 import net.fabricmc.loader.api.VersionParsingException;
 import net.fabricmc.loader.api.metadata.ModDependency;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
+import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.game.GameProvider;
 import net.fabricmc.loader.impl.game.GameProviderHelper;
 import net.fabricmc.loader.impl.game.minecraft.patch.BrandingPatch;
 import net.fabricmc.loader.impl.game.minecraft.patch.EntrypointPatch;
 import net.fabricmc.loader.impl.game.minecraft.patch.EntrypointPatchFML125;
 import net.fabricmc.loader.impl.game.patch.GameTransformer;
-import net.fabricmc.loader.impl.gui.FabricGuiEntry;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
+import net.fabricmc.loader.impl.launch.knot.Knot;
 import net.fabricmc.loader.impl.metadata.BuiltinModMetadata;
 import net.fabricmc.loader.impl.metadata.ModDependencyImpl;
 import net.fabricmc.loader.impl.util.Arguments;
@@ -60,9 +64,9 @@ import net.fabricmc.loader.impl.util.log.LogHandler;
 
 public class MinecraftGameProvider implements GameProvider {
 	private static final String[] CLIENT_ENTRYPOINTS = { "net.minecraft.client.main.Main", "net.minecraft.client.MinecraftApplet", "com.mojang.minecraft.MinecraftApplet" };
-	private static final String[] SERVER_ENTRYPOINTS = { "net.minecraft.server.Main", "net.minecraft.server.MinecraftServer", "com.mojang.minecraft.server.MinecraftServer" };
-
 	private static final String BUNDLER_ENTRYPOINT = "net.minecraft.bundler.Main";
+	private static final String[] SERVER_ENTRYPOINTS = { BUNDLER_ENTRYPOINT, "net.minecraft.server.Main", "net.minecraft.server.MinecraftServer", "com.mojang.minecraft.server.MinecraftServer" };
+
 	private static final String BUNDLER_MAIN_CLASS_PROPERTY = "bundlerMainClass";
 
 	private static final String REALMS_CHECK_PATH = "realmsVersion";
@@ -72,6 +76,18 @@ public class MinecraftGameProvider implements GameProvider {
 	private static final String LOG4J_PLUGIN_CHECK_PATH = "com/mojang/util/QueueLogAppender.class";
 
 	private static final String[] ALLOWED_CLASS_PREFIXES = { "org.apache.logging.log4j.", "com.mojang.util." };
+
+	private static final Set<String> SENSITIVE_ARGS = new HashSet<>(Arrays.asList(
+			// all lowercase without --
+			"accesstoken",
+			"clientid",
+			"profileproperties",
+			"proxypass",
+			"proxyuser",
+			"username",
+			"userproperties",
+			"uuid",
+			"xuid"));
 
 	private EnvType envType;
 	private String entrypoint;
@@ -138,10 +154,10 @@ public class MinecraftGameProvider implements GameProvider {
 	@Override
 	public Path getLaunchDirectory() {
 		if (arguments == null) {
-			return new File(".").toPath();
+			return Paths.get(".");
 		}
 
-		return getLaunchDirectory(arguments).toPath();
+		return getLaunchDirectory(arguments);
 	}
 
 	@Override
@@ -160,33 +176,53 @@ public class MinecraftGameProvider implements GameProvider {
 	}
 
 	@Override
-	public boolean locateGame(FabricLauncher launcher, String[] args, ClassLoader cl) {
+	public boolean locateGame(FabricLauncher launcher, String[] args) {
 		this.envType = launcher.getEnvironmentType();
 		this.arguments = new Arguments();
 		arguments.parse(args);
 
-		List<String> entrypointClasses;
+		String[] entrypointClasses = envType == EnvType.CLIENT ? CLIENT_ENTRYPOINTS : SERVER_ENTRYPOINTS;
+		Map<Path, ZipFile> zipFiles = new HashMap<>();
 
-		if (envType == EnvType.CLIENT) {
-			entrypointClasses = Arrays.asList(CLIENT_ENTRYPOINTS);
-		} else {
-			entrypointClasses = Arrays.asList(SERVER_ENTRYPOINTS);
-		}
+		try {
+			String gameJarProperty = System.getProperty(SystemProperties.GAME_JAR_PATH);
+			GameProviderHelper.FindResult result;
 
-		Optional<GameProviderHelper.EntrypointResult> entrypointResult = GameProviderHelper.findFirstClass(cl, entrypointClasses);
+			if (gameJarProperty != null) {
+				Path path = Paths.get(gameJarProperty);
+				if (!Files.exists(path)) throw new RuntimeException("Game jar configured through "+SystemProperties.GAME_JAR_PATH+" system property doesn't exist");
 
-		if (!entrypointResult.isPresent()) {
-			// no entrypoint on the class path, try bundler
-			if (!processBundlerJar(cl)) return false;
-		} else {
-			entrypoint = entrypointResult.get().entrypointName;
-			gameJar = entrypointResult.get().entrypointPath;
-			realmsJar = GameProviderHelper.getSource(cl, REALMS_CHECK_PATH).orElse(null);
-			if (realmsJar != null && realmsJar.equals(gameJar)) realmsJar = null;
+				result = GameProviderHelper.findFirstClass(Collections.singletonList(path), zipFiles, entrypointClasses);
+			} else {
+				result = GameProviderHelper.findFirstClass(launcher.getClassPath(), zipFiles, entrypointClasses);
+			}
 
-			useGameJarForLogging = gameJar.equals(GameProviderHelper.getSource(cl, LOG4J_API_CHECK_PATH).orElse(null))
-					|| cl.getResource(LOG4J_CONFIG_CHECK_PATH) == null;
-			hasModLoader = GameProviderHelper.getSource(cl, "ModLoader.class").isPresent();
+			if (result == null) return false;
+
+			if (result.className.equals(BUNDLER_ENTRYPOINT)) {
+				processBundlerJar(result.path);
+			} else {
+				entrypoint = result.className;
+				gameJar = result.path;
+
+				result = GameProviderHelper.findFirstClass(launcher.getClassPath(), zipFiles, REALMS_CHECK_PATH);
+				realmsJar = result != null && !result.path.equals(gameJar) ? result.path : null;
+
+				result = GameProviderHelper.findFirstClass(launcher.getClassPath(), zipFiles, LOG4J_API_CHECK_PATH);
+				useGameJarForLogging = result != null && gameJar.equals(result.path)
+						|| Knot.class.getClassLoader().getResource(LOG4J_CONFIG_CHECK_PATH) == null;
+
+				result = GameProviderHelper.findFirstClass(launcher.getClassPath(), zipFiles, "ModLoader.class");
+				hasModLoader = result != null;
+			}
+		} finally {
+			for (ZipFile zf : zipFiles.values()) {
+				try {
+					zf.close();
+				} catch (IOException e) {
+					// ignore
+				}
+			}
 		}
 
 		if (!useGameJarForLogging && log4jJars.isEmpty()) { // use Log4J log handler directly if it is not shaded into the game jar, otherwise delay it to initialize() after deobfuscation
@@ -207,60 +243,54 @@ public class MinecraftGameProvider implements GameProvider {
 		return true;
 	}
 
-	private boolean processBundlerJar(ClassLoader cl) {
+	private boolean processBundlerJar(Path path) {
 		if (envType != EnvType.SERVER) return false;
 
 		// determine urls by running the bundler and extracting them from the context class loader
 
 		URL[] urls;
 
-		try {
-			ClassLoader bundlerCl = new ClassLoader(cl) {
-				@Override
-				protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-					synchronized (getClassLoadingLock(name)) {
-						Class<?> c = findLoadedClass(name);
+		try (URLClassLoader bundlerCl = new URLClassLoader(new URL[] { path.toUri().toURL() }, MinecraftGameProvider.class.getClassLoader()) {
+			@Override
+			protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+				synchronized (getClassLoadingLock(name)) {
+					Class<?> c = findLoadedClass(name);
 
-						if (c == null) {
-							if (name.startsWith("net.minecraft.")) {
-								URL url = getResource(LoaderUtil.getClassFileName(name));
+					if (c == null) {
+						if (name.startsWith("net.minecraft.")) {
+							URL url = getResource(LoaderUtil.getClassFileName(name));
 
-								if (url != null) {
-									try (InputStream is = url.openConnection().getInputStream()) {
-										byte[] data = new byte[Math.max(is.available() + 1, 1000)];
-										int offset = 0;
-										int len;
+							if (url != null) {
+								try (InputStream is = url.openConnection().getInputStream()) {
+									byte[] data = new byte[Math.max(is.available() + 1, 1000)];
+									int offset = 0;
+									int len;
 
-										while ((len = is.read(data, offset, data.length - offset)) >= 0) {
-											offset += len;
-											if (offset == data.length) data = Arrays.copyOf(data, data.length * 2);
-										}
-
-										c = defineClass(name, data, 0, offset);
-									} catch (IOException e) {
-										throw new RuntimeException(e);
+									while ((len = is.read(data, offset, data.length - offset)) >= 0) {
+										offset += len;
+										if (offset == data.length) data = Arrays.copyOf(data, data.length * 2);
 									}
+
+									c = defineClass(name, data, 0, offset);
+								} catch (IOException e) {
+									throw new RuntimeException(e);
 								}
 							}
-
-							if (c == null) {
-								c = getParent().loadClass(name);
-							}
 						}
 
-						if (resolve) {
-							resolveClass(c);
+						if (c == null) {
+							c = getParent().loadClass(name);
 						}
-
-						return c;
 					}
-				}
 
-				{
-					registerAsParallelCapable();
-				}
-			};
+					if (resolve) {
+						resolveClass(c);
+					}
 
+					return c;
+				}
+			}
+		}) {
 			Class<?> cls = Class.forName(BUNDLER_ENTRYPOINT, true, bundlerCl);
 			Method method = cls.getMethod("main", String[].class);
 
@@ -270,6 +300,7 @@ public class MinecraftGameProvider implements GameProvider {
 			System.setProperty(BUNDLER_MAIN_CLASS_PROPERTY, BundlerClassPathCapture.class.getName());
 
 			ClassLoader prevCl = Thread.currentThread().getContextClassLoader();
+			Thread.currentThread().setContextClassLoader(bundlerCl);
 
 			method.invoke(method, (Object) new String[0]);
 			urls = BundlerClassPathCapture.FUTURE.get(10, TimeUnit.SECONDS);
@@ -294,6 +325,7 @@ public class MinecraftGameProvider implements GameProvider {
 		boolean hasGameJar = false;
 		boolean hasRealmsJar = false;
 
+		ClassLoader cl = Knot.class.getClassLoader();
 		Object[] logCheckPaths = { LOG4J_API_CHECK_PATH, LOG4J_IMPL_CHECK_PATHS, LOG4J_CONFIG_CHECK_PATH, LOG4J_PLUGIN_CHECK_PATH };
 		int locatedLog4jPaths = 0;
 
@@ -316,8 +348,6 @@ public class MinecraftGameProvider implements GameProvider {
 		}
 
 		for (URL url : urls) {
-			Path path;
-
 			try {
 				path = UrlUtil.asPath(url);
 			} catch (URISyntaxException e) {
@@ -419,7 +449,7 @@ public class MinecraftGameProvider implements GameProvider {
 			argMap.put("versionType", versionType + "Fabric");
 
 			if (!argMap.containsKey("gameDir")) {
-				argMap.put("gameDir", getLaunchDirectory(argMap).getAbsolutePath());
+				argMap.put("gameDir", getLaunchDirectory(argMap).toAbsolutePath().normalize().toString());
 			}
 
 			break;
@@ -431,17 +461,18 @@ public class MinecraftGameProvider implements GameProvider {
 		}
 	}
 
-	private static File getLaunchDirectory(Arguments argMap) {
-		return new File(argMap.getOrDefault("gameDir", "."));
+	private static Path getLaunchDirectory(Arguments argMap) {
+		return Paths.get(argMap.getOrDefault("gameDir", "."));
 	}
 
 	@Override
 	public void initialize(FabricLauncher launcher) {
-		List<Path> gameJars = new ArrayList<>(2);
-		gameJars.add(gameJar);
+		Map<String, Path> gameJars = new HashMap<>(2);
+		String name = envType.name().toLowerCase(Locale.ENGLISH);
+		gameJars.put(name, gameJar);
 
 		if (realmsJar != null) {
-			gameJars.add(realmsJar);
+			gameJars.put("realms", realmsJar);
 		}
 
 		if (isObfuscated()) {
@@ -450,8 +481,8 @@ public class MinecraftGameProvider implements GameProvider {
 					getLaunchDirectory(),
 					launcher);
 
-			gameJar = gameJars.get(0);
-			if (gameJars.size() > 1) realmsJar = gameJars.get(1);
+			gameJar = gameJars.get(name);
+			realmsJar = gameJars.get("realms");
 		}
 
 		if (useGameJarForLogging || !log4jJars.isEmpty()) {
@@ -472,6 +503,8 @@ public class MinecraftGameProvider implements GameProvider {
 	}
 
 	private void setupLog4jLogHandler(FabricLauncher launcher, boolean useTargetCl) {
+		System.setProperty("log4j2.formatMsgNoLookups", "true"); // not used by mc, causes issues with older log4j2 versions
+
 		try {
 			final String logHandlerClsName = "net.fabricmc.loader.impl.game.minecraft.Log4jLogHandler";
 			Class<?> logHandlerCls;
@@ -496,26 +529,27 @@ public class MinecraftGameProvider implements GameProvider {
 	@Override
 	public String[] getLaunchArguments(boolean sanitize) {
 		if (arguments == null) return new String[0];
-		if (!sanitize) return arguments.toArray();
 
-		List<String> list = new ArrayList<>(Arrays.asList(arguments.toArray()));
-		int remove = 0;
-		Iterator<String> iterator = list.iterator();
+		String[] ret = arguments.toArray();
+		if (!sanitize) return ret;
 
-		while (iterator.hasNext()) {
-			String next = iterator.next();
+		int writeIdx = 0;
 
-			if ("--accessToken".equals(next)) {
-				remove = 2;
-			}
+		for (int i = 0; i < ret.length; i++) {
+			String arg = ret[i];
 
-			if (remove > 0) {
-				iterator.remove();
-				remove--;
+			if (i + 1 < ret.length
+					&& arg.startsWith("--")
+					&& SENSITIVE_ARGS.contains(arg.substring(2).toLowerCase(Locale.ENGLISH))) {
+				i++; // skip value
+			} else {
+				ret[writeIdx++] = arg;
 			}
 		}
 
-		return list.toArray(new String[0]);
+		if (writeIdx < ret.length) ret = Arrays.copyOf(ret, writeIdx);
+
+		return ret;
 	}
 
 	@Override
@@ -567,19 +601,9 @@ public class MinecraftGameProvider implements GameProvider {
 			Method m = c.getMethod("main", String[].class);
 			m.invoke(null, (Object) arguments.toArray());
 		} catch (InvocationTargetException e) {
-			if (!onCrash(e.getCause(), "Minecraft has crashed!")) {
-				throw new RuntimeException("Minecraft has crashed", e.getCause()); // Pass it on
-			}
+			throw new FormattedException("Minecraft has crashed!", e.getCause());
 		} catch (ReflectiveOperationException e) {
-			if (!onCrash(e, "Failed to start Minecraft!")) {
-				throw new RuntimeException("Failed to start Minecraft", e);
-			}
+			throw new FormattedException("Failed to start Minecraft", e);
 		}
-	}
-
-	@Override
-	public boolean onCrash(Throwable exception, String context) {
-		FabricGuiEntry.displayError(context, exception, false);
-		return false; // Allow the crash to propagate
 	}
 }

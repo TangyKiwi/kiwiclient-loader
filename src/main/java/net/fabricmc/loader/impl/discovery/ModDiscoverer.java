@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -44,8 +45,6 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
 import net.fabricmc.api.EnvType;
-import net.fabricmc.loader.api.Version;
-import net.fabricmc.loader.api.VersionParsingException;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.discovery.ModCandidateFinder.ModCandidateConsumer;
 import net.fabricmc.loader.impl.game.GameProvider.BuiltinMod;
@@ -58,7 +57,6 @@ import net.fabricmc.loader.impl.util.ExceptionUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
 import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
-import net.fabricmc.loader.impl.util.version.VersionParser;
 
 public final class ModDiscoverer {
 	private final List<ModCandidateFinder> candidateFinders = new ArrayList<>();
@@ -70,7 +68,7 @@ public final class ModDiscoverer {
 		candidateFinders.add(f);
 	}
 
-	public List<ModCandidate> discoverMods(FabricLoaderImpl loader) throws ModResolutionException {
+	public List<ModCandidate> discoverMods(FabricLoaderImpl loader, Map<String, Set<ModCandidate>> envDisabledModsOut) throws ModResolutionException {
 		long startTime = System.nanoTime();
 		ForkJoinPool pool = new ForkJoinPool();
 		Set<Path> paths = new HashSet<>(); // suppresses duplicate paths
@@ -147,60 +145,31 @@ public final class ModDiscoverer {
 			throw exception;
 		}
 
-		// initialize parent data
+		// gather gather all mods (root+nested), initialize parent data
 
+		Set<ModCandidate> ret = Collections.newSetFromMap(new IdentityHashMap<>(candidates.size() * 2));
 		Queue<ModCandidate> queue = new ArrayDeque<>(candidates);
 		ModCandidate mod;
 
 		while ((mod = queue.poll()) != null) {
-			for (ModCandidate child : mod.getNestedMods()) {
-				if (child.addParent(mod)) {
-					queue.add(child);
+			if (mod.getMetadata().loadsInEnvironment(envType)) {
+				if (!ret.add(mod)) continue;
+
+				for (ModCandidate child : mod.getNestedMods()) {
+					if (child.addParent(mod)) {
+						queue.add(child);
+					}
 				}
+			} else {
+				envDisabledModsOut.computeIfAbsent(mod.getId(), ignore -> Collections.newSetFromMap(new IdentityHashMap<>())).add(mod);
 			}
 		}
-
-		// apply version replacements
-
-		applyVersionReplacements(candidates);
 
 		long endTime = System.nanoTime();
 
 		Log.debug(LogCategory.DISCOVERY, "Mod discovery time: %.1f ms", (endTime - startTime) * 1e-6);
 
-		return candidates;
-	}
-
-	private static void applyVersionReplacements(List<ModCandidate> mods) {
-		String replacements = System.getProperty(SystemProperties.DEBUG_REPLACE_VERSION);
-		if (replacements == null) return;
-
-		for (String entry : replacements.split(",")) {
-			int pos = entry.indexOf(":");
-			if (pos <= 0 || pos >= entry.length() - 1) throw new RuntimeException("invalid version replacement entry: "+entry);
-
-			String id = entry.substring(0, pos);
-			String rawVersion = entry.substring(pos + 1);
-			Version version;
-
-			try {
-				version = VersionParser.parse(rawVersion, false);
-			} catch (VersionParsingException e) {
-				throw new RuntimeException(String.format("Invalid replacement version for mod %s: %s", id, rawVersion), e);
-			}
-
-			boolean found = false;
-
-			for (ModCandidate mod : mods) {
-				if (mod.getId().equals(id)) {
-					found = true;
-					mod.getMetadata().setVersion(version);
-					break;
-				}
-			}
-
-			if (!found) Log.warn(LogCategory.DISCOVERY, "Can't find mod %s referenced by a version replacement", id);
-		}
+		return new ArrayList<>(ret);
 	}
 
 	@SuppressWarnings("serial")

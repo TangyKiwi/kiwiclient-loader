@@ -1,7 +1,7 @@
 buildscript {
 	dependencies {
-		classpath 'org.kohsuke:github-api:1.114'
-		classpath 'com.guardsquare:proguard-gradle:7.1.0'
+		classpath 'org.kohsuke:github-api:1.135'
+		classpath 'com.guardsquare:proguard-gradle:' + (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_11) ? '7.2.0-beta2' : '7.1.0')
 	}
 }
 
@@ -12,7 +12,7 @@ plugins {
 	id 'maven-publish'
 	id 'checkstyle'
 	id 'org.cadixdev.licenser' version '0.6.1'
-	id 'fabric-loom' version '0.9-SNAPSHOT' apply false
+	id 'fabric-loom' version '0.10-SNAPSHOT' apply false
 	id 'com.github.johnrengelman.shadow' version '7.0.0'
 }
 
@@ -29,7 +29,8 @@ allprojects {
 	apply plugin: 'eclipse'
 	apply plugin: 'checkstyle'
 
-	version = version + (ENV.GITHUB_ACTIONS ? "" : "+local")
+	def constantsSource = rootProject.file("src/main/java/net/fabricmc/loader/impl/FabricLoaderImpl.java").text
+	version = (constantsSource =~ /\s+VERSION\s*=\s*"(.*)";/)[0][1] + (ENV.GITHUB_ACTIONS ? "" : "+local")
 
 	repositories {
 		maven {
@@ -66,7 +67,7 @@ dependencies {
 	api "org.ow2.asm:asm-tree:${project.asm_version}"
 	api "org.ow2.asm:asm-util:${project.asm_version}"
 
-	api('net.fabricmc:sponge-mixin:0.10.6+mixin.0.8.4') {
+	api('net.fabricmc:sponge-mixin:0.10.7+mixin.0.8.4') {
 		exclude module: 'launchwrapper'
 		exclude module: 'guava'
 	}
@@ -99,6 +100,10 @@ jar {
 	enabled = false
 	// Set the classifier to fix gradle task validation confusion.
 	archiveClassifier = "disabled"
+}
+
+test {
+	useJUnitPlatform()
 }
 
 shadowJar {

@@ -18,7 +18,6 @@ package net.fabricmc.loader.impl.game;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -26,12 +25,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.jar.JarFile;
-import java.util.stream.Collectors;
+import java.util.zip.ZipFile;
 
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
@@ -49,16 +50,6 @@ import net.fabricmc.tinyremapper.OutputConsumerPath;
 import net.fabricmc.tinyremapper.TinyRemapper;
 
 public final class GameProviderHelper {
-	public static class EntrypointResult {
-		public final String entrypointName;
-		public final Path entrypointPath;
-
-		EntrypointResult(String entrypointName, Path entrypointPath) {
-			this.entrypointName = entrypointName;
-			this.entrypointPath = entrypointPath;
-		}
-	}
-
 	private GameProviderHelper() { }
 
 	public static Optional<Path> getSource(ClassLoader loader, String filename) {
@@ -99,49 +90,78 @@ public final class GameProviderHelper {
 		}
 	}
 
-	public static Optional<EntrypointResult> findFirstClass(ClassLoader loader, List<String> classNames) {
-		List<String> entrypointFilenames = classNames.stream()
-				.map(LoaderUtil::getClassFileName)
-				.collect(Collectors.toList());
+	public static FindResult findFirstClass(List<Path> paths, Map<Path, ZipFile> zipFiles, String... classNames) {
+		for (String className : classNames) {
+			String classFilename = LoaderUtil.getClassFileName(className);
 
-		for (int i = 0; i < entrypointFilenames.size(); i++) {
-			String className = classNames.get(i);
-			String classFilename = entrypointFilenames.get(i);
-			Optional<Path> classSourcePath = getSource(loader, classFilename);
+			for (Path path : paths) {
+				if (Files.isDirectory(path)) {
+					if (Files.exists(path.resolve(classFilename))) {
+						return new FindResult(className, path);
+					}
+				} else {
+					ZipFile zipFile = zipFiles.get(path);
 
-			if (classSourcePath.isPresent()) {
-				return Optional.of(new EntrypointResult(className, classSourcePath.get()));
+					if (zipFile == null) {
+						try {
+							zipFile = new ZipFile(path.toFile());
+							zipFiles.put(path, zipFile);
+						} catch (IOException e) {
+							throw new RuntimeException("Error reading "+path, e);
+						}
+					}
+
+					if (zipFile.getEntry(classFilename) != null) {
+						return new FindResult(className, path);
+					}
+				}
 			}
 		}
 
-		return Optional.empty();
+		return null;
+	}
+
+	public static final class FindResult {
+		public final String className;
+		public final Path path;
+
+		FindResult(String className, Path path) {
+			this.className = className;
+			this.path = path;
+		}
 	}
 
 	private static boolean emittedInfo = false;
 
-	public static List<Path> deobfuscate(List<Path> inputFiles, String gameId, String gameVersion, Path gameDir, FabricLauncher launcher) {
-		Log.debug(LogCategory.GAME_REMAP, "Requesting deobfuscation of %s", inputFiles);
+	public static Map<String, Path> deobfuscate(Map<String, Path> inputFileMap, String gameId, String gameVersion, Path gameDir, FabricLauncher launcher) {
+		Log.debug(LogCategory.GAME_REMAP, "Requesting deobfuscation of %s", inputFileMap);
 
 		if (launcher.isDevelopment()) { // in-dev is already deobfuscated
-			return inputFiles;
-		}
-
-		Path deobfJarDir = gameDir.resolve(FabricLoaderImpl.CACHE_DIR_NAME).resolve(FabricLoaderImpl.REMAPPED_JARS_DIR_NAME);
-
-		if (!gameId.isEmpty()) {
-			String versionedId = gameVersion.isEmpty() ? gameId : String.format("%s-%s", gameId, gameVersion);
-			deobfJarDir = deobfJarDir.resolve(versionedId);
+			return inputFileMap;
 		}
 
 		MappingConfiguration mappingConfig = launcher.getMappingConfiguration();
 		String targetNamespace = mappingConfig.getTargetNamespace();
-		List<Path> outputFiles = new ArrayList<>(inputFiles.size());
-		List<Path> tmpFiles = new ArrayList<>(inputFiles.size());
+		TinyTree mappings = mappingConfig.getMappings();
+
+		if (mappings == null
+				|| !mappings.getMetadata().getNamespaces().contains(targetNamespace)) {
+			Log.debug(LogCategory.GAME_REMAP, "No mappings, using input files");
+			return inputFileMap;
+		}
+
+		Path deobfJarDir = getDeobfJarDir(gameDir, gameId, gameVersion);
+		List<Path> inputFiles = new ArrayList<>(inputFileMap.size());
+		List<Path> outputFiles = new ArrayList<>(inputFileMap.size());
+		List<Path> tmpFiles = new ArrayList<>(inputFileMap.size());
+		Map<String, Path> ret = new HashMap<>(inputFileMap.size());
 		boolean anyMissing = false;
 
-		for (Path inputFile : inputFiles) {
+		for (Map.Entry<String, Path> entry : inputFileMap.entrySet()) {
+			String name = entry.getKey();
+			Path inputFile = entry.getValue();
 			// TODO: allow versioning mappings?
-			String deobfJarFilename = targetNamespace + "-" + inputFile.getFileName();
+			String deobfJarFilename = String.format("%s-%s.jar", name, targetNamespace);
 			Path outputFile = deobfJarDir.resolve(deobfJarFilename);
 			Path tmpFile = deobfJarDir.resolve(deobfJarFilename + ".tmp");
 
@@ -156,8 +176,10 @@ public final class GameProviderHelper {
 				}
 			}
 
+			inputFiles.add(inputFile);
 			outputFiles.add(outputFile);
 			tmpFiles.add(tmpFile);
+			ret.put(name, outputFile);
 
 			if (!anyMissing && !Files.exists(outputFile)) {
 				anyMissing = true;
@@ -166,15 +188,7 @@ public final class GameProviderHelper {
 
 		if (!anyMissing) {
 			Log.debug(LogCategory.GAME_REMAP, "Remapped files exist already, reusing them");
-			return outputFiles;
-		}
-
-		TinyTree mappings = mappingConfig.getMappings();
-
-		if (mappings == null
-				|| !mappings.getMetadata().getNamespaces().contains(targetNamespace)) {
-			Log.debug(LogCategory.GAME_REMAP, "No mappings, using input files");
-			return inputFiles;
+			return ret;
 		}
 
 		Log.debug(LogCategory.GAME_REMAP, "Fabric mapping file detected, applying...");
@@ -191,7 +205,26 @@ public final class GameProviderHelper {
 			throw new RuntimeException("error remapping game jars "+inputFiles, e);
 		}
 
-		return outputFiles;
+		return ret;
+	}
+
+	private static Path getDeobfJarDir(Path gameDir, String gameId, String gameVersion) {
+		Path ret = gameDir.resolve(FabricLoaderImpl.CACHE_DIR_NAME).resolve(FabricLoaderImpl.REMAPPED_JARS_DIR_NAME);
+		StringBuilder versionDirName = new StringBuilder();
+
+		if (!gameId.isEmpty()) {
+			versionDirName.append(gameId);
+		}
+
+		if (!gameVersion.isEmpty()) {
+			if (versionDirName.length() > 0) versionDirName.append('-');
+			versionDirName.append(gameVersion);
+		}
+
+		if (versionDirName.length() > 0) versionDirName.append('-');
+		versionDirName.append(FabricLoaderImpl.VERSION);
+
+		return ret.resolve(versionDirName.toString().replaceAll("[^\\w\\-\\. ]+", "_"));
 	}
 
 	private static void deobfuscate0(List<Path> inputFiles, List<Path> outputFiles, List<Path> tmpFiles, TinyTree mappings, String targetNamespace, FabricLauncher launcher) throws IOException {
@@ -202,22 +235,12 @@ public final class GameProviderHelper {
 
 		Set<Path> depPaths = new HashSet<>();
 
-		for (URL url : launcher.getLoadTimeDependencies()) {
-			try {
-				Path path = UrlUtil.asPath(url);
+		for (Path path : launcher.getClassPath()) {
+			if (!inputFiles.contains(path)) {
+				depPaths.add(path);
 
-				if (!Files.exists(path)) {
-					throw new RuntimeException("Path does not exist: " + path);
-				}
-
-				if (!inputFiles.contains(path)) {
-					depPaths.add(path);
-
-					Log.debug(LogCategory.GAME_REMAP, "Appending '%s' to remapper classpath", path);
-					remapper.readClassPathAsync(path);
-				}
-			} catch (URISyntaxException e) {
-				throw new RuntimeException("Failed to convert '" + url + "' to path!", e);
+				Log.debug(LogCategory.GAME_REMAP, "Appending '%s' to remapper classpath", path);
+				remapper.readClassPathAsync(path);
 			}
 		}
 
