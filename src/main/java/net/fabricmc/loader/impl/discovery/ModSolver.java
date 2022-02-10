@@ -173,7 +173,7 @@ final class ModSolver {
 
 		if (dependencyHelper.hasASolution()) {
 			Collection<DomainObject> solution = dependencyHelper.getASolution();
-			Set<ModDependency> disabledDeps = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<ModDependency> disabledDeps = new HashSet<>(); // DisableDepVar uses equality semantics, not identity
 
 			for (DomainObject obj : solution) {
 				if (obj instanceof DisableDepVar) {
@@ -703,7 +703,8 @@ final class ModSolver {
 
 				if (selectedMod != null) { // dep is already selected = present
 					if (!removalSim) {
-						if (dep.getKind() == ModDependency.Kind.DEPENDS && !dep.matches(selectedMod.getVersion())) { // ..but isn't suitable
+						if (!dep.getKind().isSoft() // .. and is a hard dep
+								&& dep.matches(selectedMod.getVersion()) != dep.getKind().isPositive()) { // ..but isn't suitable (DEPENDS without match or BREAKS with match)
 							if (depDisableSim) {
 								dependencyHelper.setTrue(getCreateDisableDepVar(dep, disabledDeps), new Explanation(ErrorKind.HARD_DEP, mod, dep));
 							} else {

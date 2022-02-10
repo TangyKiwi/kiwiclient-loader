@@ -39,6 +39,7 @@ import net.fabricmc.loader.api.VersionParsingException;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.lib.gson.JsonReader;
 import net.fabricmc.loader.impl.lib.gson.JsonToken;
+import net.fabricmc.loader.impl.util.ExceptionUtil;
 import net.fabricmc.loader.impl.util.FileSystemUtil;
 import net.fabricmc.loader.impl.util.LoaderUtil;
 import net.fabricmc.loader.impl.util.version.SemanticVersionImpl;
@@ -65,7 +66,7 @@ public final class McVersionLookup {
 	private static final Pattern INDEV_PATTERN = Pattern.compile("(?:inf-|Inf?dev )(?:0\\.31 )?(\\d+(-\\d+)?)");
 	private static final String STRING_DESC = "Ljava/lang/String;";
 
-	public static McVersion getVersion(Path gameJar, String[] entrypointClasses, String versionName) {
+	public static McVersion getVersion(Path gameJar, String entrypointClass, String versionName) {
 		McVersion.Builder builder = new McVersion.Builder();
 
 		if (versionName != null) {
@@ -76,19 +77,15 @@ public final class McVersionLookup {
 			FileSystem fs = jarFs.get();
 
 			// Determine class version
-			for (String entrypointClass : entrypointClasses) {
+			if (entrypointClass != null) {
 				Path file = fs.getPath(LoaderUtil.getClassFileName(entrypointClass));
 
 				if (Files.isRegularFile(file)) {
 					try (DataInputStream is = new DataInputStream(Files.newInputStream(file))) {
-						if (is.readInt() != 0xCAFEBABE) {
-							continue;
+						if (is.readInt() == 0xCAFEBABE) {
+							is.readUnsignedShort();
+							builder.setClassVersion(is.readUnsignedShort());
 						}
-
-						is.readUnsignedShort();
-						builder.setClassVersion(is.readUnsignedShort());
-
-						break;
 					}
 				}
 			}
@@ -98,7 +95,7 @@ public final class McVersionLookup {
 				fillVersionFromJar(gameJar, fs, builder);
 			}
 		} catch (IOException e) {
-			e.printStackTrace();
+			throw ExceptionUtil.wrap(e);
 		}
 
 		return builder.build();
@@ -110,7 +107,7 @@ public final class McVersionLookup {
 		try (FileSystemUtil.FileSystemDelegate jarFs = FileSystemUtil.getJarFileSystem(gameJar, false)) {
 			fillVersionFromJar(gameJar, jarFs.get(), builder);
 		} catch (IOException e) {
-			e.printStackTrace();
+			throw ExceptionUtil.wrap(e);
 		}
 
 		return builder.build();
@@ -197,14 +194,19 @@ public final class McVersionLookup {
 
 			reader.endObject();
 
-			if (name == null) {
-				name = id;
-			} else if (id != null) {
-				if (id.length() < name.length()) name = id;
+			String version;
+
+			if (name == null
+					|| id != null && id.length() < name.length()) {
+				version = id;
+			} else {
+				version = name;
 			}
 
-			if (name != null && release != null) {
+			if (version != null && release != null) {
+				builder.setId(id);
 				builder.setName(name);
+				builder.setVersion(version);
 				builder.setRelease(release);
 
 				return true;

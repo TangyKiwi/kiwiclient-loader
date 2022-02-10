@@ -26,6 +26,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,7 @@ import org.objectweb.asm.commons.Remapper;
 import net.fabricmc.accesswidener.AccessWidenerReader;
 import net.fabricmc.accesswidener.AccessWidenerRemapper;
 import net.fabricmc.accesswidener.AccessWidenerWriter;
+import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.launch.FabricLauncherBase;
 import net.fabricmc.loader.impl.util.FileSystemUtil;
@@ -84,7 +86,10 @@ public final class RuntimeModRemapper {
 				info.tag = tag;
 
 				if (mod.hasPath()) {
-					info.inputPath = mod.getPath();
+					List<Path> paths = mod.getPaths();
+					if (paths.size() != 1) throw new UnsupportedOperationException("multiple path for "+mod);
+
+					info.inputPath = paths.get(0);
 				} else {
 					info.inputPath = mod.copyToDir(tmpDir, true);
 					info.inputIsTemp = true;
@@ -127,6 +132,8 @@ public final class RuntimeModRemapper {
 					try (FileSystemUtil.FileSystemDelegate jarFs = FileSystemUtil.getJarFileSystem(info.inputPath, false)) {
 						FileSystem fs = jarFs.get();
 						info.accessWidener = remapAccessWidener(Files.readAllBytes(fs.getPath(accessWidener)), remapper.getRemapper());
+					} catch (Throwable t) {
+						throw new RuntimeException("Error remapping access widener for mod '"+mod.getId()+"'!", t);
 					}
 				}
 			}
@@ -147,7 +154,7 @@ public final class RuntimeModRemapper {
 					}
 				}
 
-				mod.setPath(info.outputPath);
+				mod.setPaths(Collections.singletonList(info.outputPath));
 			}
 		} catch (Throwable t) {
 			remapper.finish();
@@ -164,7 +171,7 @@ public final class RuntimeModRemapper {
 				}
 			}
 
-			throw new RuntimeException("Failed to remap mods", t);
+			throw new FormattedException("Failed to remap mods!", t);
 		} finally {
 			for (RemapInfo info : infoMap.values()) {
 				try {

@@ -71,7 +71,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 	public static final int ASM_VERSION = Opcodes.ASM9;
 
-	public static final String VERSION = "0.12.12";
+	public static final String VERSION = "0.13.1";
 	public static final String MOD_ID = "fabricloader";
 
 	public static final String CACHE_DIR_NAME = ".fabric"; // relative to game dir
@@ -186,7 +186,11 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		try {
 			setup();
 		} catch (ModResolutionException exception) {
-			throw new FormattedException("Incompatible mod set!", exception);
+			if (exception.getCause() == null) {
+				throw new FormattedException("Incompatible mod set!", exception.getMessage());
+			} else {
+				throw new FormattedException("Incompatible mod set!", exception);
+			}
 		}
 	}
 
@@ -284,7 +288,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		for (ModCandidate mod : modCandidates) {
 			if (!mod.hasPath() && !mod.isBuiltin()) {
 				try {
-					mod.setPath(mod.copyToDir(outputdir, false));
+					mod.setPaths(Collections.singletonList(mod.copyToDir(outputdir, false)));
 				} catch (IOException e) {
 					throw new RuntimeException("Error extracting mod "+mod, e);
 				}
@@ -300,8 +304,10 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		// add mods to classpath
 		// TODO: This can probably be made safer, but that's a long-term goal
 		for (ModContainerImpl mod : mods) {
-			if (!mod.getMetadata().getId().equals(MOD_ID) && !mod.getInfo().getType().equals("builtin")) {
-				FabricLauncherBase.getLauncher().addToClassPath(mod.getOriginPath());
+			if (!mod.getMetadata().getId().equals(MOD_ID) && !mod.getMetadata().getType().equals("builtin")) {
+				for (Path path : mod.getCodeSourcePaths()) {
+					FabricLauncherBase.getLauncher().addToClassPath(path);
+				}
 			}
 		}
 
@@ -314,12 +320,14 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 			Set<Path> knownModPaths = new HashSet<>();
 
 			for (ModContainerImpl mod : mods) {
-				knownModPaths.add(mod.getOriginPath().toAbsolutePath().normalize());
+				for (Path path : mod.getCodeSourcePaths()) {
+					knownModPaths.add(path.toAbsolutePath().normalize());
+				}
 			}
 
 			// suppress fabric loader explicitly in case its fabric.mod.json is in a different folder from the classes
 			Path fabricLoaderPath = ClasspathModCandidateFinder.getFabricLoaderPath();
-			if (fabricLoaderPath != null) knownModPaths.add(fabricLoaderPath);
+			if (fabricLoaderPath != null) knownModPaths.add(fabricLoaderPath.toAbsolutePath().normalize());
 
 			for (String pathName : System.getProperty("java.class.path", "").split(File.pathSeparator)) {
 				if (pathName.isEmpty() || pathName.endsWith("*")) continue;
@@ -403,13 +411,11 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 	}
 
 	private void addMod(ModCandidate candidate) throws ModResolutionException {
-		LoaderModMetadata info = candidate.getMetadata();
-
-		ModContainerImpl container = new ModContainerImpl(info, candidate.getPath());
+		ModContainerImpl container = new ModContainerImpl(candidate);
 		mods.add(container);
-		modMap.put(info.getId(), container);
+		modMap.put(candidate.getId(), container);
 
-		for (String provides : info.getProvides()) {
+		for (String provides : candidate.getProvides()) {
 			modMap.put(provides, container);
 		}
 	}
@@ -459,7 +465,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 					}
 				}
 			} catch (Exception e) {
-				throw new RuntimeException(String.format("Failed to setup mod %s (%s)", mod.getInfo().getName(), mod.getOriginPath()), e);
+				throw new RuntimeException(String.format("Failed to setup mod %s (%s)", mod.getInfo().getName(), mod.getOrigin()), e);
 			}
 		}
 	}
@@ -470,15 +476,15 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 		for (net.fabricmc.loader.api.ModContainer modContainer : getAllMods()) {
 			LoaderModMetadata modMetadata = (LoaderModMetadata) modContainer.getMetadata();
 			String accessWidener = modMetadata.getAccessWidener();
+			if (accessWidener == null) continue;
 
-			if (accessWidener != null) {
-				Path path = modContainer.getPath(accessWidener);
+			Path path = modContainer.findPath(accessWidener).orElse(null);
+			if (path == null) throw new RuntimeException(String.format("Missing accessWidener file %s from mod %s", accessWidener, modContainer.getMetadata().getId()));
 
-				try (BufferedReader reader = Files.newBufferedReader(path)) {
-					accessWidenerReader.read(reader, getMappingResolver().getCurrentRuntimeNamespace());
-				} catch (Exception e) {
-					throw new RuntimeException("Failed to read accessWidener file from mod " + modMetadata.getId(), e);
-				}
+			try (BufferedReader reader = Files.newBufferedReader(path)) {
+				accessWidenerReader.read(reader, getMappingResolver().getCurrentRuntimeNamespace());
+			} catch (Exception e) {
+				throw new RuntimeException("Failed to read accessWidener file from mod " + modMetadata.getId(), e);
 			}
 		}
 	}
