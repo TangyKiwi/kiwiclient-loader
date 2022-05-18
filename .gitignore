@@ -5,7 +5,7 @@
 !/gradle
 !/src
 !/.github
-!/com
+!/com.tangykiwi.kiwiclient-loader
 
 # Files
 !/.gitattributes
