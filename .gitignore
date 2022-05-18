@@ -20,6 +20,6 @@
 !/README.md
 !/settings.gradle
 !/proguard.conf
-!/kiwiclient-loader-0.13.3.jar
+!/com.tangykiwi.kiwiclient-loader/0.13.3/kiwiclient-loader-0.13.3.jar
 
 !/minecraft
