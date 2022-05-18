@@ -1,7 +1,7 @@
-iris-loader
+kiwiclient-loader
 ===========
 
-The loader for standalone versions of Iris, based off the Fabric loader.
+The loader for standalone versions of KiwiClient, based off the Iris/Fabric loader.
 
 ## License
 

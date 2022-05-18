@@ -38,7 +38,7 @@ public abstract class FabricLoader implements net.fabricmc.loader.api.FabricLoad
 
 	public File getModsDirectory() {
 		//TODO: is there a cleaner way to do this?
-		return getGameDir().resolve("iris-reserved").resolve(((FabricLoaderImpl) INSTANCE).getGameProvider().getRawGameVersion()).toFile();
+		return getGameDir().resolve("kiwiclient-mods").resolve(((FabricLoaderImpl) INSTANCE).getGameProvider().getRawGameVersion()).toFile();
 	}
 
 	@Override

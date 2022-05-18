@@ -19,7 +19,7 @@ plugins {
 sourceCompatibility = JavaVersion.VERSION_1_8
 targetCompatibility = JavaVersion.VERSION_1_8
 
-archivesBaseName = "iris-loader"
+archivesBaseName = "kiwiclient-loader"
 
 // Fetch build number from Jenkins
 def ENV = System.getenv()
@@ -153,7 +153,7 @@ task fatJar(type: ShadowJar, dependsOn: getSat4jAbout) {
 	outputs.upToDateWhen { false }
 }
 
-File proguardFile = file("build/libs/iris-loader-${version}.jar")
+File proguardFile = file("build/libs/kiwiclient-loader-${version}.jar")
 
 import proguard.gradle.ProGuardTask
 task proguardJar(type: ProGuardTask, dependsOn: fatJar) {

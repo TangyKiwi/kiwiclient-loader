@@ -201,7 +201,7 @@ public final class FabricLoaderImpl extends net.fabricmc.loader.FabricLoader {
 
 		ModDiscoverer discoverer = new ModDiscoverer();
 		discoverer.addCandidateFinder(new ClasspathModCandidateFinder());
-		discoverer.addCandidateFinder(new DirectoryModCandidateFinder(gameDir.resolve("iris-reserved").resolve(getGameProvider().getRawGameVersion()), remapRegularMods));
+		discoverer.addCandidateFinder(new DirectoryModCandidateFinder(gameDir.resolve("kiwiclient-mods").resolve(getGameProvider().getRawGameVersion()), remapRegularMods));
 		discoverer.addCandidateFinder(new ArgumentModCandidateFinder(remapRegularMods));
 
 		Map<String, Set<ModCandidate>> envDisabledMods = new HashMap<>();
