@@ -22,6 +22,7 @@ import java.net.URL;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -34,11 +35,13 @@ import java.util.Set;
 import java.util.jar.JarFile;
 import java.util.zip.ZipFile;
 
+import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.fabricmc.loader.impl.FormattedException;
 import net.fabricmc.loader.impl.launch.FabricLauncher;
 import net.fabricmc.loader.impl.launch.MappingConfiguration;
 import net.fabricmc.loader.impl.util.LoaderUtil;
+import net.fabricmc.loader.impl.util.SystemProperties;
 import net.fabricmc.loader.impl.util.UrlConversionException;
 import net.fabricmc.loader.impl.util.UrlUtil;
 import net.fabricmc.loader.impl.util.log.Log;
@@ -53,12 +56,30 @@ import net.fabricmc.tinyremapper.TinyRemapper;
 public final class GameProviderHelper {
 	private GameProviderHelper() { }
 
+	public static Path getCommonGameJar() {
+		return getGameJar(SystemProperties.GAME_JAR_PATH);
+	}
+
+	public static Path getEnvGameJar(EnvType env) {
+		return getGameJar(env == EnvType.CLIENT ? SystemProperties.GAME_JAR_PATH_CLIENT : SystemProperties.GAME_JAR_PATH_SERVER);
+	}
+
+	private static Path getGameJar(String property) {
+		String val = System.getProperty(property);
+		if (val == null) return null;
+
+		Path path = Paths.get(val);
+		if (!Files.exists(path)) throw new RuntimeException("Game jar "+path+" ("+LoaderUtil.normalizePath(path)+") configured through "+property+" system property doesn't exist");
+
+		return LoaderUtil.normalizeExistingPath(path);
+	}
+
 	public static Optional<Path> getSource(ClassLoader loader, String filename) {
 		URL url;
 
 		if ((url = loader.getResource(filename)) != null) {
 			try {
-				return Optional.of(UrlUtil.getSourcePath(filename, url));
+				return Optional.of(UrlUtil.getCodeSource(url, filename));
 			} catch (UrlConversionException e) {
 				// TODO: Point to a logger
 				e.printStackTrace();
@@ -77,7 +98,7 @@ public final class GameProviderHelper {
 				URL url = urls.nextElement();
 
 				try {
-					paths.add(UrlUtil.getSourcePath(filename, url));
+					paths.add(UrlUtil.getCodeSource(url, filename));
 				} catch (UrlConversionException e) {
 					// TODO: Point to a logger
 					e.printStackTrace();

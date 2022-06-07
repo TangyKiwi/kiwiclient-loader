@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.Writer;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -28,6 +30,7 @@ import java.nio.file.Paths;
 import java.util.Properties;
 
 import net.fabricmc.loader.impl.launch.knot.KnotServer;
+import net.fabricmc.loader.impl.util.LoaderUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
 
 public class FabricServerLauncher {
@@ -63,8 +66,8 @@ public class FabricServerLauncher {
 
 		try {
 			Class<?> c = Class.forName(mainClass);
-			c.getMethod("main", String[].class).invoke(null, (Object) args);
-		} catch (Exception e) {
+			MethodHandles.lookup().findStatic(c, "main", MethodType.methodType(void.class, String[].class)).invokeExact(args);
+		} catch (Throwable e) {
 			throw new RuntimeException("An exception occurred when launching the server!", e);
 		}
 	}
@@ -74,7 +77,7 @@ public class FabricServerLauncher {
 			System.setProperty(SystemProperties.GAME_JAR_PATH, getServerJarPath());
 		}
 
-		Path serverJar = Paths.get(System.getProperty(SystemProperties.GAME_JAR_PATH)).toAbsolutePath().normalize();
+		Path serverJar = LoaderUtil.normalizePath(Paths.get(System.getProperty(SystemProperties.GAME_JAR_PATH)));
 
 		if (!Files.exists(serverJar)) {
 			System.err.println("The Minecraft server .JAR is missing (" + serverJar + ")!");

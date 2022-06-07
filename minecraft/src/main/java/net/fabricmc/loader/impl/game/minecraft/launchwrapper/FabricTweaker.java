@@ -23,11 +23,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.net.MalformedURLException;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.jar.JarEntry;
@@ -54,6 +54,7 @@ import net.fabricmc.loader.impl.launch.FabricLauncherBase;
 import net.fabricmc.loader.impl.launch.FabricMixinBootstrap;
 import net.fabricmc.loader.impl.util.Arguments;
 import net.fabricmc.loader.impl.util.FileSystemUtil;
+import net.fabricmc.loader.impl.util.LoaderUtil;
 import net.fabricmc.loader.impl.util.ManifestUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
 import net.fabricmc.loader.impl.util.UrlUtil;
@@ -61,7 +62,7 @@ import net.fabricmc.loader.impl.util.log.Log;
 import net.fabricmc.loader.impl.util.log.LogCategory;
 
 public abstract class FabricTweaker extends FabricLauncherBase implements ITweaker {
-	private static final LogCategory LOG_CATEGORY = new LogCategory("GameProvider", "Tweaker");
+	private static final LogCategory LOG_CATEGORY = LogCategory.create("GameProvider", "Tweaker");
 	protected Arguments arguments;
 	private LaunchClassLoader launchClassLoader;
 	private final List<Path> classPath = new ArrayList<>();
@@ -125,11 +126,10 @@ public abstract class FabricTweaker extends FabricLauncherBase implements ITweak
 		classPath.clear();
 
 		for (URL url : launchClassLoader.getSources()) {
-			try {
-				classPath.add(UrlUtil.asPath(url));
-			} catch (URISyntaxException e) {
-				e.printStackTrace();
-			}
+			Path path = UrlUtil.asPath(url);
+			if (!Files.exists(path)) continue;
+
+			classPath.add(LoaderUtil.normalizeExistingPath(path));
 		}
 
 		GameProvider provider = new MinecraftGameProvider();
@@ -138,6 +138,8 @@ public abstract class FabricTweaker extends FabricLauncherBase implements ITweak
 				|| !provider.locateGame(this, arguments.toArray())) {
 			throw new RuntimeException("Could not locate Minecraft: provider locate failed");
 		}
+
+		Log.finishBuiltinConfig();
 
 		arguments = null;
 
@@ -182,6 +184,11 @@ public abstract class FabricTweaker extends FabricLauncherBase implements ITweak
 
 	@Override
 	public void setAllowedPrefixes(Path path, String... prefixes) {
+		// not implemented (no-op)
+	}
+
+	@Override
+	public void setValidParentClassPath(Collection<Path> paths) {
 		// not implemented (no-op)
 	}
 

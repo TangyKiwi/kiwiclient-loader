@@ -24,44 +24,37 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.CodeSource;
 
 public final class UrlUtil {
-	private UrlUtil() { }
+	public static final Path LOADER_CODE_SOURCE = getCodeSource(UrlUtil.class);
 
-	public static URL getSource(String filename, URL resourceURL) throws UrlConversionException {
-		URL codeSourceURL;
-
+	public static Path getCodeSource(URL url, String localPath) throws UrlConversionException {
 		try {
-			URLConnection connection = resourceURL.openConnection();
+			URLConnection connection = url.openConnection();
 
 			if (connection instanceof JarURLConnection) {
-				codeSourceURL = ((JarURLConnection) connection).getJarFileURL();
+				return asPath(((JarURLConnection) connection).getJarFileURL());
 			} else {
-				String path = resourceURL.getPath();
+				String path = url.getPath();
 
-				if (path.endsWith(filename)) {
-					codeSourceURL = new URL(resourceURL.getProtocol(), resourceURL.getHost(), resourceURL.getPort(), path.substring(0, path.length() - filename.length()));
+				if (path.endsWith(localPath)) {
+					return asPath(new URL(url.getProtocol(), url.getHost(), url.getPort(), path.substring(0, path.length() - localPath.length())));
 				} else {
-					throw new UrlConversionException("Could not figure out code source for file '" + filename + "' and URL '" + resourceURL + "'!");
+					throw new UrlConversionException("Could not figure out code source for file '" + localPath + "' in URL '" + url + "'!");
 				}
 			}
 		} catch (Exception e) {
 			throw new UrlConversionException(e);
 		}
-
-		return codeSourceURL;
 	}
 
-	public static Path getSourcePath(String filename, URL resourceURL) throws UrlConversionException {
+	public static Path asPath(URL url) {
 		try {
-			return asPath(getSource(filename, resourceURL));
+			return Paths.get(url.toURI());
 		} catch (URISyntaxException e) {
-			throw new UrlConversionException(e);
+			throw ExceptionUtil.wrap(e);
 		}
-	}
-
-	public static Path asPath(URL url) throws URISyntaxException {
-		return Paths.get(url.toURI());
 	}
 
 	public static URL asUrl(File file) throws MalformedURLException {
@@ -70,5 +63,12 @@ public final class UrlUtil {
 
 	public static URL asUrl(Path path) throws MalformedURLException {
 		return path.toUri().toURL();
+	}
+
+	public static Path getCodeSource(Class<?> cls) {
+		CodeSource cs = cls.getProtectionDomain().getCodeSource();
+		if (cs == null) return null;
+
+		return asPath(cs.getLocation());
 	}
 }

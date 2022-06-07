@@ -26,12 +26,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import net.fabricmc.loader.impl.launch.FabricLauncherBase;
+import net.fabricmc.loader.impl.util.LoaderUtil;
 import net.fabricmc.loader.impl.util.SystemProperties;
 import net.fabricmc.loader.impl.util.UrlConversionException;
 import net.fabricmc.loader.impl.util.UrlUtil;
@@ -52,7 +54,7 @@ public class ClasspathModCandidateFinder implements ModCandidateFinder {
 					URL url = mods.nextElement();
 
 					try {
-						Path path = UrlUtil.getSourcePath("fabric.mod.json", url).toAbsolutePath().normalize();
+						Path path = LoaderUtil.normalizeExistingPath(UrlUtil.getCodeSource(url, "fabric.mod.json"));
 						List<Path> paths = pathGroups.get(path);
 
 						if (paths == null) {
@@ -69,7 +71,7 @@ public class ClasspathModCandidateFinder implements ModCandidateFinder {
 			}
 		} else { // production, add loader as a mod
 			try {
-				out.accept(getFabricLoaderPath(), false);
+				out.accept(UrlUtil.LOADER_CODE_SOURCE, false);
 			} catch (Throwable t) {
 				Log.debug(LogCategory.DISCOVERY, "Could not retrieve launcher code source!", t);
 			}
@@ -85,6 +87,7 @@ public class ClasspathModCandidateFinder implements ModCandidateFinder {
 		String prop = System.getProperty(SystemProperties.PATH_GROUPS);
 		if (prop == null) return Collections.emptyMap();
 
+		Set<Path> cp = new HashSet<>(FabricLauncherBase.getLauncher().getClassPath());
 		Map<Path, List<Path>> ret = new HashMap<>();
 
 		for (String group : prop.split(File.pathSeparator+File.pathSeparator)) {
@@ -93,18 +96,22 @@ public class ClasspathModCandidateFinder implements ModCandidateFinder {
 			for (String path : group.split(File.pathSeparator)) {
 				if (path.isEmpty()) continue;
 
-				Path resolvedPath = Paths.get(path).toAbsolutePath().normalize();
+				Path resolvedPath = Paths.get(path);
 
 				if (!Files.exists(resolvedPath)) {
-					Log.warn(LogCategory.DISCOVERY, "Skipping missing class path group entry %s", path);
+					Log.debug(LogCategory.DISCOVERY, "Skipping missing class path group entry %s", path);
 					continue;
 				}
 
-				paths.add(resolvedPath);
+				resolvedPath = LoaderUtil.normalizeExistingPath(resolvedPath);
+
+				if (cp.contains(resolvedPath)) {
+					paths.add(resolvedPath);
+				}
 			}
 
 			if (paths.size() < 2) {
-				Log.warn(LogCategory.DISCOVERY, "Skipping class path group with no effect: %s", group);
+				Log.debug(LogCategory.DISCOVERY, "Skipping class path group with no effect: %s", group);
 				continue;
 			}
 
@@ -116,14 +123,5 @@ public class ClasspathModCandidateFinder implements ModCandidateFinder {
 		}
 
 		return ret;
-	}
-
-	public static Path getFabricLoaderPath() {
-		try {
-			return UrlUtil.asPath(FabricLauncherBase.getLauncher().getClass().getProtectionDomain().getCodeSource().getLocation());
-		} catch (Throwable t) {
-			Log.debug(LogCategory.DISCOVERY, "Could not retrieve launcher code source!", t);
-			return null;
-		}
 	}
 }

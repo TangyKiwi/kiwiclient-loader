@@ -12,6 +12,7 @@ jobs:
       options: --user root
     steps:
       - run: apt update && apt install git -y && git --version
+      - run: git config --global --add safe.directory /__w/fabric-loader/fabric-loader
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
@@ -28,3 +29,6 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
           CHANGELOG: ${{ steps.changelog.outputs.changelog }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIGNING_SERVER: ${{ secrets.SIGNING_SERVER }}
+          SIGNING_PGP_KEY: ${{ secrets.SIGNING_PGP_KEY }}
+          SIGNING_JAR_KEY: ${{ secrets.SIGNING_JAR_KEY }}
