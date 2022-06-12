@@ -46,8 +46,8 @@ public final class Log4jLogHandler implements LogHandler {
 	}
 
 	@Override
-	public void log(long time, LogLevel level, LogCategory category, String msg, Throwable exc, boolean isReplayedBuiltin) {
-		// TODO: suppress console log output if isReplayedBuiltin is true to avoid duplicate output
+	public void log(long time, LogLevel level, LogCategory category, String msg, Throwable exc, boolean fromReplay, boolean wasSuppressed) {
+		// TODO: suppress console log output if wasSuppressed is false to avoid duplicate output
 		getLogger(category).log(translateLogLevel(level), msg, exc);
 	}
 
@@ -55,8 +55,7 @@ public final class Log4jLogHandler implements LogHandler {
 		Logger ret = (Logger) category.data;
 
 		if (ret == null) {
-			String name = category.name.isEmpty() ? Log.NAME : String.format("%s/%s", Log.NAME, category.name);
-			category.data = ret = LogManager.getLogger(name);
+			category.data = ret = LogManager.getLogger(category.toString());
 		}
 
 		return ret;
